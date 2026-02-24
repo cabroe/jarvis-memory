@@ -16,12 +16,13 @@ type Seed struct {
 	Title        string    `json:"title"`
 	Type         string    `json:"type"`
 	Confidence   float32   `json:"confidence"`
+	Protected    bool      `json:"protected"`
 	LastAccessed time.Time `json:"last_accessed"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (db *DB) ListSeeds(ctx context.Context, limit int) ([]Seed, error) {
-	query := `SELECT id, content, title, type, confidence, last_accessed, created_at FROM seeds ORDER BY created_at DESC LIMIT $1`
+	query := `SELECT id, content, title, type, confidence, protected, last_accessed, created_at FROM seeds ORDER BY created_at DESC LIMIT $1`
 	rows, err := db.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list seeds: %w", err)
@@ -31,7 +32,7 @@ func (db *DB) ListSeeds(ctx context.Context, limit int) ([]Seed, error) {
 	var seeds []Seed
 	for rows.Next() {
 		var s Seed
-		if err := rows.Scan(&s.ID, &s.Content, &s.Title, &s.Type, &s.Confidence, &s.LastAccessed, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Content, &s.Title, &s.Type, &s.Confidence, &s.Protected, &s.LastAccessed, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		seeds = append(seeds, s)
@@ -57,14 +58,23 @@ func (db *DB) InsertSeed(ctx context.Context, s *Seed, embedding []float32) erro
 }
 
 func (db *DB) DeleteSeed(ctx context.Context, id string) error {
+	// Check if seed is protected
+	var protected bool
+	err := db.QueryRowContext(ctx, `SELECT protected FROM seeds WHERE id = $1`, id).Scan(&protected)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("seed not found")
+		}
+		return fmt.Errorf("failed to check seed: %w", err)
+	}
+	if protected {
+		return fmt.Errorf("seed is protected and cannot be deleted")
+	}
+
 	query := `DELETE FROM seeds WHERE id = $1`
-	result, err := db.ExecContext(ctx, query, id)
+	_, err = db.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete seed: %w", err)
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return fmt.Errorf("seed not found")
 	}
 	return nil
 }
@@ -92,6 +102,19 @@ func (db *DB) SetSeedConfidence(ctx context.Context, id string, confidence float
 	result, err := db.ExecContext(ctx, query, confidence, id)
 	if err != nil {
 		return fmt.Errorf("failed to set confidence: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("seed not found")
+	}
+	return nil
+}
+
+func (db *DB) SetSeedProtected(ctx context.Context, id string, protected bool) error {
+	query := `UPDATE seeds SET protected = $1 WHERE id = $2`
+	result, err := db.ExecContext(ctx, query, protected, id)
+	if err != nil {
+		return fmt.Errorf("failed to set protected: %w", err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {

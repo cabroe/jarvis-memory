@@ -22,8 +22,11 @@ function show_help {
   echo -e "  search <query> [limit] [threshold] [--since X] [--until X]"
   echo -e "                                        🔍 Semantic search (time: today|yesterday|this_week|last_week|YYYY-MM-DD)"
   echo -e "  update <id> <content> <title> [type]  ✏️  Update an existing seed"
-  echo -e "  delete <id>                           🗑️  Delete a seed"
+  echo -e "  delete <id>                           🗑️  Delete a seed (protected seeds blocked)"
   echo -e "  confidence <id> <value>               ⚖️  Set confidence (0.0-1.0)"
+  echo -e "  protect <id>                          🛡️  Protect seed from delete/decay"
+  echo -e "  unprotect <id>                        🔓 Remove protection"
+  echo -e "  classify                              🏷️  Auto-classify all seeds (confidence + protection)"
   echo -e ""
   echo -e "${GREEN}Agent Contexts:${NC}"
   echo -e "  context-create <agent_id> <type> <metadata> [summary]"
@@ -280,6 +283,74 @@ $(echo "$CONTENTS" | fold -s -w 120 | head -20)
       -d "{\"agentId\": \"${AGENT_ID}\", \"type\": \"episodic\", \"metadata\": {\"action\": \"reflection\", \"date\": \"${DATE_HUMAN}\", \"seed_count\": ${COUNT}}, \"summary\": $(echo "$SUMMARY" | jq -Rs .)}" > /dev/null 2>&1
 
     echo -e "${GREEN}✅ Reflexion gespeichert!${NC}"
+    ;;
+
+  protect)
+    ID="$2"
+    if [ -z "$ID" ]; then
+      echo -e "${RED}Error: seed ID is required.${NC}"
+      exit 1
+    fi
+    echo -e "🛡️  Protecting seed $ID..."
+    curl -s -X POST "$API_URL/seeds/$ID/protect" \
+      -H "Content-Type: application/json" \
+      -d '{"protected": true}' | jq
+    ;;
+
+  unprotect)
+    ID="$2"
+    if [ -z "$ID" ]; then
+      echo -e "${RED}Error: seed ID is required.${NC}"
+      exit 1
+    fi
+    echo -e "🔓 Unprotecting seed $ID..."
+    curl -s -X POST "$API_URL/seeds/$ID/protect" \
+      -H "Content-Type: application/json" \
+      -d '{"protected": false}' | jq
+    ;;
+
+  classify)
+    echo -e "${CYAN}🏷️  Auto-Classifying all seeds...${NC}"
+    echo ""
+
+    SEEDS=$(curl -s "$API_URL/seeds?limit=10000")
+    TOTAL=$(echo "$SEEDS" | jq 'length')
+    PROTECTED=0
+    MEDIUM=0
+    LOW=0
+
+    for i in $(seq 0 $(($TOTAL - 1))); do
+      ID=$(echo "$SEEDS" | jq -r ".[$i].id")
+      TITLE=$(echo "$SEEDS" | jq -r ".[$i].title")
+      TYPE=$(echo "$SEEDS" | jq -r ".[$i].type")
+      CONTENT=$(echo "$SEEDS" | jq -r ".[$i].content")
+
+      # WICHTIG: Identity, rules, personal info → protect + confidence 1.0
+      if echo "$TITLE $CONTENT" | grep -qiE "(identität|anrede|über carsten|über mich|kern-info|profil|regeln|persönlichkeit)"; then
+        curl -s -X POST "$API_URL/seeds/$ID/protect" -H "Content-Type: application/json" -d '{"protected": true}' > /dev/null
+        curl -s -X POST "$API_URL/seeds/$ID/confidence" -H "Content-Type: application/json" -d '{"confidence": 1.0}' > /dev/null
+        echo -e "  🛡️  ${GREEN}WICHTIG${NC}: $TITLE"
+        PROTECTED=$((PROTECTED + 1))
+      # MITTEL: Skills, procedural, semantic, episodic → confidence 0.7
+      elif [ "$TYPE" = "semantic" ] || [ "$TYPE" = "procedural" ] || [ "$TYPE" = "episodic" ]; then
+        curl -s -X POST "$API_URL/seeds/$ID/confidence" -H "Content-Type: application/json" -d '{"confidence": 0.7}' > /dev/null
+        echo -e "  ⚖️  ${YELLOW}MITTEL${NC}:  $TITLE"
+        MEDIUM=$((MEDIUM + 1))
+      # UNWICHTIG: auto_capture, test, markdown → confidence 0.3
+      elif [ "$TYPE" = "auto_capture" ] || [ "$TYPE" = "markdown" ] || echo "$TITLE" | grep -qiE "(test|fox|Thread snapshot)"; then
+        curl -s -X POST "$API_URL/seeds/$ID/confidence" -H "Content-Type: application/json" -d '{"confidence": 0.3}' > /dev/null
+        echo -e "  📉 ${RED}UNWICHTIG${NC}: $TITLE"
+        LOW=$((LOW + 1))
+      else
+        echo -e "  ➖ UNVERÄNDERT: $TITLE"
+      fi
+    done
+
+    echo ""
+    echo -e "${GREEN}✅ Klassifizierung abgeschlossen!${NC}"
+    echo -e "  🛡️  Geschützt (1.0): $PROTECTED"
+    echo -e "  ⚖️  Mittel (0.7):    $MEDIUM"
+    echo -e "  📉 Unwichtig (0.3): $LOW"
     ;;
 
   export)

@@ -43,9 +43,10 @@ func (db *DB) AutoMigrate(ctx context.Context) error {
 
 		`CREATE INDEX IF NOT EXISTS seeds_embedding_idx ON seeds USING hnsw (embedding vector_l2_ops);`,
 
-		// New columns for confidence and decay tracking
+		// New columns for confidence, decay tracking, and protection
 		`ALTER TABLE seeds ADD COLUMN IF NOT EXISTS confidence REAL NOT NULL DEFAULT 1.0;`,
 		`ALTER TABLE seeds ADD COLUMN IF NOT EXISTS last_accessed TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`,
+		`ALTER TABLE seeds ADD COLUMN IF NOT EXISTS protected BOOLEAN NOT NULL DEFAULT FALSE;`,
 
 		`CREATE TABLE IF NOT EXISTS agent_contexts (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -82,6 +83,7 @@ func (db *DB) ApplyDecay(ctx context.Context) error {
 		WHERE created_at < NOW() - INTERVAL '90 days'
 		  AND confidence < 0.3
 		  AND confidence > 0.01
+		  AND protected = FALSE
 	`
 
 	result, err := db.ExecContext(ctx, query)

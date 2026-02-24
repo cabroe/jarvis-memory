@@ -28,6 +28,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.DELETE("/seeds/:id", h.HandleDeleteSeed)
 	e.PUT("/seeds/:id", h.HandleUpdateSeed)
 	e.POST("/seeds/:id/confidence", h.HandleSetConfidence)
+	e.POST("/seeds/:id/protect", h.HandleSetProtected)
 	e.POST("/agent-contexts", h.HandleCreateAgentContext)
 	e.GET("/agent-contexts", h.HandleGetAgentContexts)
 	e.GET("/agent-contexts/:id", h.HandleGetAgentContext)
@@ -238,6 +239,25 @@ func (h *Handler) HandleSetConfidence(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "confidence": req.Confidence})
+}
+
+type SetProtectedRequest struct {
+	Protected bool `json:"protected"`
+}
+
+func (h *Handler) HandleSetProtected(c *echo.Context) error {
+	id := c.Param("id")
+
+	var req SetProtectedRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	}
+
+	if err := h.db.SetSeedProtected(c.Request().Context(), id, req.Protected); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "protected": req.Protected})
 }
 
 type CreateAgentContextRequest struct {
