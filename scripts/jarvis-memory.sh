@@ -3,32 +3,46 @@
 # Command-line tool for Jarvis Memory API
 # Assumes the API is running at http://localhost:8080
 
-API_URL="http://localhost:8080"
+API_URL="${JARVIS_API_URL:-http://localhost:8080}"
 
 # Colors for output
-RED='\03.3[0;31m'
+RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 function show_help {
-  echo -e "Jarvis Memory CLI Tool"
-  echo -e "Usage:"
-  echo -e "  $0 test                                        - Test the API connection"
-  echo -e "  $0 save <content> <title> [type]               - Save a new memory seed"
-  echo -e "  $0 search <query> [limit] [threshold]          - Semantic search for memories"
-  echo -e "  $0 context-create <agent_id> <type> <metadata> - Create an agent context"
-  echo -e "  $0 context-list <agent_id>                     - List contexts for an agent"
-  echo -e "  $0 context-get <id>                            - Get a specific context by ID"
+  echo -e "${CYAN}🧠 Jarvis Memory CLI${NC}"
+  echo -e ""
+  echo -e "Usage: $0 <command> [args]"
+  echo -e ""
+  echo -e "${GREEN}Seeds (Memory):${NC}"
+  echo -e "  save <content> <title> [type]         💾 Save a new memory seed"
+  echo -e "  search <query> [limit] [threshold]    🔍 Semantic search for memories"
+  echo -e "  update <id> <content> <title> [type]  ✏️  Update an existing seed"
+  echo -e "  delete <id>                           🗑️  Delete a seed"
+  echo -e "  confidence <id> <value>               ⚖️  Set confidence (0.0-1.0)"
+  echo -e ""
+  echo -e "${GREEN}Agent Contexts:${NC}"
+  echo -e "  context-create <agent_id> <type> <metadata> [summary]"
+  echo -e "  context-list [agent_id]               📋 List contexts"
+  echo -e "  context-get <id>                      🔎 Get specific context"
+  echo -e ""
+  echo -e "${GREEN}Admin:${NC}"
+  echo -e "  stats                                 📊 Show database statistics"
+  echo -e "  list [limit]                          📋 List latest seeds"
+  echo -e "  test                                  🧪 Test API connection"
 }
 
 case "$1" in
   test)
-    echo "Testing connection to Jarvis Memory at $API_URL/admin..."
+    echo "Testing connection to Jarvis Memory at $API_URL..."
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/admin")
     if [ "$HTTP_CODE" -eq 200 ]; then
-      echo -e "${GREEN}SUCCESS${NC}: Jarvis Memory API is reachable."
+      echo -e "${GREEN}✅ SUCCESS${NC}: Jarvis Memory API is reachable."
     else
-      echo -e "${RED}FAILURE${NC}: Could not reach API. HTTP status: $HTTP_CODE"
+      echo -e "${RED}❌ FAILURE${NC}: Could not reach API. HTTP status: $HTTP_CODE"
     fi
     ;;
   
@@ -38,16 +52,63 @@ case "$1" in
     TYPE="${4:-markdown}"
     
     if [ -z "$CONTENT" ] || [ -z "$TITLE" ]; then
-      echo "Error: Content and title are required."
-      show_help
+      echo -e "${RED}Error: content and title are required.${NC}"
+      echo "Usage: $0 save <content> <title> [type]"
       exit 1
     fi
     
-    echo "Saving memory..."
+    echo -e "💾 Saving memory..."
     curl -s -X POST "$API_URL/seeds" \
       -F "content=$CONTENT" \
       -F "title=$TITLE" \
       -F "type=$TYPE" | jq
+    ;;
+
+  update)
+    ID="$2"
+    CONTENT="$3"
+    TITLE="$4"
+    TYPE="${5:-markdown}"
+
+    if [ -z "$ID" ] || [ -z "$CONTENT" ] || [ -z "$TITLE" ]; then
+      echo -e "${RED}Error: id, content, and title are required.${NC}"
+      echo "Usage: $0 update <id> <content> <title> [type]"
+      exit 1
+    fi
+
+    echo -e "✏️  Updating seed $ID..."
+    curl -s -X PUT "$API_URL/seeds/$ID" \
+      -H "Content-Type: application/json" \
+      -d "{\"content\": $(echo "$CONTENT" | jq -Rs .), \"title\": $(echo "$TITLE" | jq -Rs .), \"type\": \"$TYPE\"}" | jq
+    ;;
+
+  delete)
+    ID="$2"
+
+    if [ -z "$ID" ]; then
+      echo -e "${RED}Error: seed ID is required.${NC}"
+      echo "Usage: $0 delete <id>"
+      exit 1
+    fi
+
+    echo -e "${YELLOW}🗑️  Deleting seed $ID...${NC}"
+    curl -s -X DELETE "$API_URL/seeds/$ID" | jq
+    ;;
+
+  confidence)
+    ID="$2"
+    VALUE="$3"
+
+    if [ -z "$ID" ] || [ -z "$VALUE" ]; then
+      echo -e "${RED}Error: id and confidence value are required.${NC}"
+      echo "Usage: $0 confidence <id> <value (0.0-1.0)>"
+      exit 1
+    fi
+
+    echo -e "⚖️  Setting confidence for $ID to $VALUE..."
+    curl -s -X POST "$API_URL/seeds/$ID/confidence" \
+      -H "Content-Type: application/json" \
+      -d "{\"confidence\": $VALUE}" | jq
     ;;
     
   search)
@@ -56,17 +117,38 @@ case "$1" in
     THRESHOLD="${4:-0.0}"
     
     if [ -z "$QUERY" ]; then
-      echo "Error: Query is required."
-      show_help
+      echo -e "${RED}Error: query is required.${NC}"
+      echo "Usage: $0 search <query> [limit] [threshold]"
       exit 1
     fi
     
-    echo "Searching..."
+    echo -e "🔍 Searching..."
     curl -s -X POST "$API_URL/seeds/query" \
       -H "Content-Type: application/json" \
-      -d "{\"query\": \"$QUERY\", \"limit\": $LIMIT, \"threshold\": $THRESHOLD}" | jq
+      -d "{\"query\": $(echo "$QUERY" | jq -Rs .), \"limit\": $LIMIT, \"threshold\": $THRESHOLD}" | jq
     ;;
-    
+
+  list)
+    LIMIT="${2:-20}"
+    echo -e "📋 Latest $LIMIT seeds..."
+    curl -s "$API_URL/admin/api/data" | jq ".seeds[:$LIMIT] | .[] | {id, title, type, confidence, created_at}"
+    ;;
+
+  stats)
+    echo -e "${CYAN}📊 Jarvis Memory Statistics${NC}"
+    DATA=$(curl -s "$API_URL/admin/api/data")
+    SEED_COUNT=$(echo "$DATA" | jq '.seeds | length')
+    CTX_COUNT=$(echo "$DATA" | jq '.agentContexts | length')
+    echo -e "  🌱 Seeds:          ${GREEN}$SEED_COUNT${NC}"
+    echo -e "  🤖 Agent Contexts: ${GREEN}$CTX_COUNT${NC}"
+    echo -e ""
+    echo -e "${CYAN}Seeds by Type:${NC}"
+    echo "$DATA" | jq -r '.seeds | group_by(.type) | .[] | "  \(.[0].type): \(length)"'
+    echo -e ""
+    echo -e "${CYAN}Avg Confidence:${NC}"
+    echo "$DATA" | jq -r '.seeds | (map(.confidence) | add / length) | "  \(. * 100 | round)%"'
+    ;;
+
   context-create)
     AGENT_ID="$2"
     TYPE="$3"
@@ -74,25 +156,25 @@ case "$1" in
     SUMMARY="$5"
     
     if [ -z "$AGENT_ID" ] || [ -z "$TYPE" ] || [ -z "$METADATA" ]; then
-      echo "Error: agent_id, type, and metadata are required."
-      show_help
+      echo -e "${RED}Error: agent_id, type, and metadata are required.${NC}"
+      echo "Usage: $0 context-create <agent_id> <type> <metadata_json> [summary]"
       exit 1
     fi
     
-    echo "Creating agent context..."
+    echo -e "📝 Creating agent context..."
     curl -s -X POST "$API_URL/agent-contexts" \
       -H "Content-Type: application/json" \
-      -d "{\"agentId\": \"$AGENT_ID\", \"type\": \"$TYPE\", \"metadata\": $METADATA, \"summary\": \"$SUMMARY\"}" | jq
+      -d "{\"agentId\": \"$AGENT_ID\", \"type\": \"$TYPE\", \"metadata\": $METADATA, \"summary\": $(echo "$SUMMARY" | jq -Rs .)}" | jq
     ;;
     
   context-list)
     AGENT_ID="$2"
     
     if [ -z "$AGENT_ID" ]; then
-      echo "Listing all contexts..."
+      echo -e "📋 Listing all contexts..."
       curl -s "$API_URL/agent-contexts" | jq
     else
-      echo "Listing contexts for agent $AGENT_ID..."
+      echo -e "📋 Listing contexts for agent $AGENT_ID..."
       curl -s "$API_URL/agent-contexts?agentId=$AGENT_ID" | jq
     fi
     ;;
@@ -101,12 +183,12 @@ case "$1" in
     ID="$2"
     
     if [ -z "$ID" ]; then
-      echo "Error: Context ID is required."
-      show_help
+      echo -e "${RED}Error: context ID is required.${NC}"
+      echo "Usage: $0 context-get <id>"
       exit 1
     fi
     
-    echo "Getting context $ID..."
+    echo -e "🔎 Getting context $ID..."
     curl -s "$API_URL/agent-contexts/$ID" | jq
     ;;
     
