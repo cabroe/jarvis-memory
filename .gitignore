@@ -1,0 +1,17 @@
+# Binaries
+/jarvis-memory
+/bin/
+/.venv/
+
+# Models (too large for standard git)
+/models/
+
+# OS specific
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Conversion scripts (temporary)
+/convert_model.py
