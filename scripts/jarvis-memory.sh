@@ -33,6 +33,7 @@ function show_help {
   echo -e "${GREEN}Admin:${NC}"
   echo -e "  stats                                 📊 Show database statistics"
   echo -e "  list [limit]                          📋 List latest seeds"
+  echo -e "  reflect [day]                         🪞 Daily self-reflection (default: today)"
   echo -e "  test                                  🧪 Test API connection"
 }
 
@@ -216,6 +217,67 @@ case "$1" in
     
     echo -e "🔎 Getting context $ID..."
     curl -s "$API_URL/agent-contexts/$ID" | jq
+    ;;
+
+  reflect)
+    DAY="${2:-today}"
+    AGENT_ID="${JARVIS_AGENT_ID:-JARVIS}"
+    TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    DATE_HUMAN=$(date -u +"%Y-%m-%d")
+
+    echo -e "${CYAN}🪞 Selbstreflexion für: ${YELLOW}$DAY${NC}"
+    echo ""
+
+    # 1. Get all seeds from the target day
+    SEEDS=$(curl -s -X POST "$API_URL/seeds/query" \
+      -H "Content-Type: application/json" \
+      -d "{\"query\": \"Was habe ich gelernt?\", \"limit\": 50, \"threshold\": 0.0, \"since\": \"$DAY\"}")
+
+    COUNT=$(echo "$SEEDS" | jq 'length')
+
+    if [ "$COUNT" -eq 0 ] || [ "$COUNT" = "null" ]; then
+      echo -e "${YELLOW}Keine Seeds für '$DAY' gefunden. Nichts zu reflektieren.${NC}"
+      exit 0
+    fi
+
+    # 2. Extract titles and types
+    TITLES=$(echo "$SEEDS" | jq -r '.[].title' | sort -u)
+    TYPES=$(echo "$SEEDS" | jq -r '.[].type' | sort | uniq -c | sort -rn)
+    CONTENTS=$(echo "$SEEDS" | jq -r '.[].content' | head -c 2000)
+
+    # 3. Build reflection
+    REFLECTION="🪞 Tagesreflexion – ${DATE_HUMAN}
+
+📊 Statistik:
+- Seeds verarbeitet: ${COUNT}
+- Typen: 
+$(echo "$TYPES" | while read cnt typ; do echo "  • ${typ}: ${cnt}"; done)
+
+📝 Themen des Tages:
+$(echo "$TITLES" | while read t; do echo "  • ${t}"; done)
+
+💡 Zusammenfassung:
+$(echo "$CONTENTS" | fold -s -w 120 | head -20)
+
+⏰ Reflexion erstellt: ${TS}"
+
+    echo -e "$REFLECTION"
+    echo ""
+
+    # 4. Save as episodic seed
+    echo -e "💾 Speichere Reflexion als Seed..."
+    curl -s -X POST "$API_URL/seeds" \
+      -F "content=${REFLECTION}" \
+      -F "title=🪞 Tagesreflexion – ${DATE_HUMAN}" \
+      -F "type=episodic" | jq
+
+    # 5. Save agent context
+    SUMMARY="Reflexion: ${COUNT} Seeds verarbeitet am ${DATE_HUMAN}"
+    curl -s -X POST "$API_URL/agent-contexts" \
+      -H "Content-Type: application/json" \
+      -d "{\"agentId\": \"${AGENT_ID}\", \"type\": \"episodic\", \"metadata\": {\"action\": \"reflection\", \"date\": \"${DATE_HUMAN}\", \"seed_count\": ${COUNT}}, \"summary\": $(echo "$SUMMARY" | jq -Rs .)}" > /dev/null 2>&1
+
+    echo -e "${GREEN}✅ Reflexion gespeichert!${NC}"
     ;;
     
   *)
