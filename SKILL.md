@@ -17,7 +17,7 @@ Persistent memory storage with semantic search, confidence scoring, and memory d
 - ✏️ **Full CRUD** — Create, update, and delete seeds via REST API
 - 🔄 **Auto-Recall** — Queries relevant memories before each AI turn and injects as context
 - 💾 **Auto-Capture** — Saves conversations after each AI turn
-- 🖥️ **Admin Panel** — Dark-themed dashboard with edit/delete/confidence controls
+- 🖥️ **Admin Panel** — ⚠️ Currently unavailable (localhost blocked)
 - 🔒 **100% Local** — No API keys, no external services, complete privacy
 
 ## Prerequisites
@@ -92,20 +92,29 @@ curl -X POST http://localhost:8080/seeds/<UUID>/confidence \
   -d '{"confidence": 0.5}'
 ```
 
-### 🤖 Create Agent Context
+## 🤖 Agent Contexts (Für eigene Erinnerungen)
+
+Agent-Contexts sind **zustandsbasierte Sitzungen** – nutze sie für deine eigenen Erinnerungen und Zustände:
+
 ```bash
-./scripts/jarvis-memory.sh context-create "agent-id" "episodic" '{"key":"value"}' "Summary"
+# Eigenen Status speichern
+curl -X POST http://localhost:8080/agent-contexts \
+  -H "Content-Type: application/json" \
+  -d '{"agentId": "JARVIS", "type": "episodic", "metadata": {"status": "aktiv", "session": "main"}, "summary": "Ich bin online"}'
+
+# Auflisten
+curl -s -X GET "http://localhost:8080/agent-contexts"
+
+# Löschen (via DB)
+docker exec -i jarvis-memory-db-1 psql -U jarvis -d jarvis_memory \
+  -c "DELETE FROM agent_contexts WHERE id = '<UUID>';"
 ```
 
-### 📋 List Agent Contexts
-```bash
-./scripts/jarvis-memory.sh context-list "agent-id"
-```
-
-### 🔎 Get Specific Context
-```bash
-./scripts/jarvis-memory.sh context-get <UUID>
-```
+**Nutzung:**
+- Aktueller Status (online/offline)
+- Emotionales Befinden
+- Aktive Projekte
+- Laufende Missionen
 
 ## 🎯 Confidence & Decay
 
@@ -115,9 +124,29 @@ Each seed has a **confidence** value (default `1.0`). Search results are weighte
 weighted_similarity = cosine_similarity × confidence
 ```
 
-**Automatic Decay:** On each server restart, seeds older than 90 days with confidence < 0.3 are reduced by 10%. Seeds are never fully erased automatically (floor: 0.01).
+**Confidence setzen:**
+```bash
+curl -X POST http://localhost:8080/seeds/<UUID>/confidence \
+  -H "Content-Type: application/json" \
+  -d '{"confidence": 0.5}'
+```
 
-**Last Accessed:** Every search hit updates `last_accessed`, enabling usage-based decay strategies.
+**Automatic Decay (Startup Decay):**
+- Beim Server-Start werden alle Seeds geprüft
+- **Bedingung:** >90 Tage alt UND Confidence < 0.3
+- **Aktion:** Confidence wird um 10% reduziert
+- **Floor:** Confidence geht nie unter 0.01
+
+**Last Accessed:**
+- Jede Suche aktualisiert `last_accessed`
+- Ermöglicht nutzungsbasiertes Vergessen
+
+**Beispiel:**
+```
+Seed Alter: 100 Tage, Confidence: 0.2
+→ Beim Start: Confidence = 0.2 × 0.9 = 0.18
+→ Bei nächsten Start: weiter -10%
+```
 
 ## API Endpoints
 
