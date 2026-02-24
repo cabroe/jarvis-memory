@@ -335,12 +335,6 @@ $(echo "$CONTENTS" | fold -s -w 120 | head -20)
     echo -e "  🤖 Contexts: $CTX_COUNT"
     echo ""
 
-    read -p "Proceed? (y/N) " CONFIRM
-    if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
-      echo "Aborted."
-      exit 0
-    fi
-
     # Import seeds
     IMPORTED=0
     FAILED=0
