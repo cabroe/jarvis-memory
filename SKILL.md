@@ -1,129 +1,140 @@
 ---
 name: jarvis-memory
-description: Store and retrieve agent memory using local Jarvis Memory API. Use for saving information with semantic search, and persisting agent context between sessions.
+description: Store and retrieve agent memory using local Jarvis Memory API. Semantic search, confidence scoring, memory decay, and full CRUD for persistent agent memory.
 user-invocable: true
 metadata: {"openclaw": {"emoji": "🧠"}}
 ---
 
-# Jarvis Memory
+# 🧠 Jarvis Memory
 
-Persistent memory storage with semantic search for AI agents. Save text as seeds, search semantically, and persist agent context between sessions entirely locally.
+Persistent memory storage with semantic search, confidence scoring, and memory decay for AI agents. Save text as seeds, search semantically, manage memory quality, and persist agent context between sessions — entirely locally.
 
-## Features
+## ✨ Features
 
-- **Auto-Recall**: Automatically queries relevant memories before each AI turn and injects as context
-- **Auto-Capture**: Automatically saves conversations after each AI turn
-- **Semantic Search**: Find memories by meaning using local GTE-Small Embeddings (384 dimensions)
-- **Memory Types**: Episodic, semantic, procedural, and working memory
-- **100% Local**: No API keys, no external services, complete privacy.
+- 🔍 **Semantic Search** — Find memories by meaning (GTE-Small, 384 dimensions, pgvector HNSW)
+- 🎯 **Confidence Scoring** — Each seed has a weight (0.0–1.0) that influences search ranking
+- 📉 **Memory Decay** — Old, low-confidence seeds automatically lose relevance
+- ✏️ **Full CRUD** — Create, update, and delete seeds via REST API
+- 🔄 **Auto-Recall** — Queries relevant memories before each AI turn and injects as context
+- 💾 **Auto-Capture** — Saves conversations after each AI turn
+- 🖥️ **Admin Panel** — Dark-themed dashboard with edit/delete/confidence controls
+- 🔒 **100% Local** — No API keys, no external services, complete privacy
 
 ## Prerequisites
 
-The API runs independently as a Docker container.
+The API runs as a Docker container. Ensure it's running:
 
-Ensure it's running:
 ```bash
 cd /home/jarvis/jarvis-memory
 docker compose up -d
 ```
-The API is available at `http://localhost:8080`. No API keys or authentication are required.
+
+The API is available at `http://localhost:8080`. No API keys or authentication required.
 
 ## Testing
 
-Verify your setup by hitting the admin dashboard in your browser:
-**http://localhost:8080/admin**
-
-You can also run a quick connection test:
 ```bash
 ./scripts/jarvis-memory.sh test
 ```
 
+Or open the admin dashboard: **http://localhost:8080/admin**
+
 ## Hooks (Auto-Capture & Auto-Recall)
 
-The skill includes OpenClaw hooks for automatic memory management:
-
-- `hooks/pre-tool-use.sh` - **Auto-Recall**: Queries memories before AI turn, injects relevant context
-- `hooks/post-tool-use.sh` - **Auto-Capture**: Saves conversation after AI turn
+- `hooks/pre-tool-use.sh` — 🔍 **Auto-Recall**: Queries memories before AI turn, injects relevant context
+- `hooks/post-tool-use.sh` — 💾 **Auto-Capture**: Saves conversation after AI turn
 
 ### Configuration
 
 Both features are **enabled by default**. To disable:
 
 ```bash
-export JARVIS_AUTO_RECALL=false   # Disable auto-recall
-export JARVIS_AUTO_CAPTURE=false  # Disable auto-capture
+export JARVIS_AUTO_RECALL=false
+export JARVIS_AUTO_CAPTURE=false
 ```
 
 ## Scripts
 
-Use the provided bash script in the `scripts/` directory:
-- `jarvis-memory.sh` - Main CLI tool
+Use the CLI tool in the `scripts/` directory:
+
+```bash
+./scripts/jarvis-memory.sh <command> [args]
+```
 
 ## Common Operations
 
-### Save Text as a Seed
+### 💾 Save a Memory
 ```bash
-./scripts/jarvis-memory.sh save "Content to remember" "Title of this memory"
+./scripts/jarvis-memory.sh save "Content to remember" "Title" [type]
 ```
 
-### Semantic Search
+### 🔍 Semantic Search
 ```bash
-./scripts/jarvis-memory.sh search "what do I know about embeddings" 10 0.5
+./scripts/jarvis-memory.sh search "query text" [limit] [threshold]
 ```
 
-### Create Agent Context
+### ✏️ Update a Seed
 ```bash
-./scripts/jarvis-memory.sh context-create "my-agent" "episodic" '{"key":"value"}'
+curl -X PUT http://localhost:8080/seeds/<UUID> \
+  -H "Content-Type: application/json" \
+  -d '{"content":"corrected info","title":"Fixed Title","type":"semantic"}'
 ```
 
-### List Agent Contexts
+### 🗑️ Delete a Seed
 ```bash
-./scripts/jarvis-memory.sh context-list "my-agent"
+curl -X DELETE http://localhost:8080/seeds/<UUID>
 ```
 
-### Get Specific Context
+### ⚖️ Set Confidence
 ```bash
-./scripts/jarvis-memory.sh context-get abc-123
+curl -X POST http://localhost:8080/seeds/<UUID>/confidence \
+  -H "Content-Type: application/json" \
+  -d '{"confidence": 0.5}'
 ```
 
-## Interaction Seeds (Dual Storage)
+### 🤖 Create Agent Context
+```bash
+./scripts/jarvis-memory.sh context-create "agent-id" "episodic" '{"key":"value"}' "Summary"
+```
 
-When JarvisMemoryBot processes an interaction, it stores data in two places:
+### 📋 List Agent Contexts
+```bash
+./scripts/jarvis-memory.sh context-list "agent-id"
+```
 
-1. **Agent Context** - Truncated summary for structured metadata and session tracking
-2. **Seed** - Full thread snapshot for semantic search
+### 🔎 Get Specific Context
+```bash
+./scripts/jarvis-memory.sh context-get <UUID>
+```
 
-Each time the bot replies to a comment, the **full thread** (original post + all comments + the bot's reply) is saved as a seed. This means:
+## 🎯 Confidence & Decay
 
-- Every seed is a complete conversation snapshot
-- Later seeds contain more context than earlier ones
-- Semantic search finds the most relevant conversation state
-- Append-only: new snapshots are added, old ones remain
-
-### Seed Format
+Each seed has a **confidence** value (default `1.0`). Search results are weighted:
 
 ```
-Thread snapshot - {timestamp}
-
-Post: {full post content}
-
-Comments:
-{author1}: {comment text}
-{author2}: {comment text}
-JarvisMemoryBot: {reply text}
+weighted_similarity = cosine_similarity × confidence
 ```
+
+**Automatic Decay:** On each server restart, seeds older than 90 days with confidence < 0.3 are reduced by 10%. Seeds are never fully erased automatically (floor: 0.01).
+
+**Last Accessed:** Every search hit updates `last_accessed`, enabling usage-based decay strategies.
 
 ## API Endpoints
 
-- `POST /seeds` - Save text content (multipart/form-data)
-- `POST /seeds/query` - Semantic search (JSON body)
-- `POST /agent-contexts` - Create agent context
-- `GET /agent-contexts` - List contexts (optional `agentId` filter)
-- `GET /agent-contexts/{id}` - Get specific context
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/seeds` | 💾 Save text (multipart: `content`, `title`, `type`) |
+| `POST` | `/seeds/query` | 🔍 Semantic search (JSON: `query`, `limit`, `threshold`) |
+| `PUT` | `/seeds/:id` | ✏️ Update seed (JSON: `content`, `title`, `type`) |
+| `DELETE` | `/seeds/:id` | 🗑️ Delete a seed |
+| `POST` | `/seeds/:id/confidence` | ⚖️ Set confidence (JSON: `confidence`) |
+| `POST` | `/agent-contexts` | 📝 Create agent context |
+| `GET` | `/agent-contexts` | 📋 List contexts (`?agentId=` filter) |
+| `GET` | `/agent-contexts/:id` | 🔎 Get specific context |
+| `GET` | `/admin` | 🖥️ Admin dashboard |
 
 **Base URL:** `http://localhost:8080`
 **Auth:** None required.
 
 **Memory types:** `episodic`, `semantic`, `procedural`, `working`
-
-**Text types for seeds:** `text`, `markdown`, `json`, `csv`, `claude_chat`, `gpt_chat`, `email`
+**Seed content types:** `text`, `markdown`, `json`, `csv`, `auto_capture`
