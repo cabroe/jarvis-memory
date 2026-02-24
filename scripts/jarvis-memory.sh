@@ -19,7 +19,8 @@ function show_help {
   echo -e ""
   echo -e "${GREEN}Seeds (Memory):${NC}"
   echo -e "  save <content> <title> [type]         💾 Save a new memory seed"
-  echo -e "  search <query> [limit] [threshold]    🔍 Semantic search for memories"
+  echo -e "  search <query> [limit] [threshold] [--since X] [--until X]"
+  echo -e "                                        🔍 Semantic search (time: today|yesterday|this_week|last_week|YYYY-MM-DD)"
   echo -e "  update <id> <content> <title> [type]  ✏️  Update an existing seed"
   echo -e "  delete <id>                           🗑️  Delete a seed"
   echo -e "  confidence <id> <value>               ⚖️  Set confidence (0.0-1.0)"
@@ -112,20 +113,44 @@ case "$1" in
     ;;
     
   search)
-    QUERY="$2"
-    LIMIT="${3:-10}"
-    THRESHOLD="${4:-0.0}"
-    
+    QUERY=""
+    LIMIT="10"
+    THRESHOLD="0.0"
+    SINCE=""
+    UNTIL=""
+
+    shift # remove "search"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since) SINCE="$2"; shift 2 ;;
+        --until) UNTIL="$2"; shift 2 ;;
+        *)
+          if [ -z "$QUERY" ]; then QUERY="$1"
+          elif [ "$LIMIT" = "10" ] && [[ "$1" =~ ^[0-9]+$ ]]; then LIMIT="$1"
+          else THRESHOLD="$1"
+          fi
+          shift ;;
+      esac
+    done
+
     if [ -z "$QUERY" ]; then
       echo -e "${RED}Error: query is required.${NC}"
-      echo "Usage: $0 search <query> [limit] [threshold]"
+      echo "Usage: $0 search <query> [limit] [threshold] [--since today|yesterday|this_week|last_week|YYYY-MM-DD] [--until ...]"
       exit 1
     fi
-    
+
+    # Build JSON payload
+    JSON="{\"query\": $(echo "$QUERY" | jq -Rs .), \"limit\": $LIMIT, \"threshold\": $THRESHOLD"
+    [ -n "$SINCE" ] && JSON="$JSON, \"since\": \"$SINCE\""
+    [ -n "$UNTIL" ] && JSON="$JSON, \"until\": \"$UNTIL\""
+    JSON="$JSON}"
+
     echo -e "🔍 Searching..."
+    [ -n "$SINCE" ] && echo -e "  📅 Since: ${CYAN}$SINCE${NC}"
+    [ -n "$UNTIL" ] && echo -e "  📅 Until: ${CYAN}$UNTIL${NC}"
     curl -s -X POST "$API_URL/seeds/query" \
       -H "Content-Type: application/json" \
-      -d "{\"query\": $(echo "$QUERY" | jq -Rs .), \"limit\": $LIMIT, \"threshold\": $THRESHOLD}" | jq
+      -d "$JSON" | jq
     ;;
 
   list)

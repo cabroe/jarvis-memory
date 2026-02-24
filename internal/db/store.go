@@ -105,20 +105,36 @@ type SeedSearchResult struct {
 	Similarity float32 `json:"similarity"`
 }
 
-func (db *DB) SearchSeeds(ctx context.Context, embedding []float32, limit int, threshold float32) ([]SeedSearchResult, error) {
+func (db *DB) SearchSeeds(ctx context.Context, embedding []float32, limit int, threshold float32, since *time.Time, until *time.Time) ([]SeedSearchResult, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+
+	// Build dynamic WHERE clause for time filtering
+	timeFilter := ""
+	args := []interface{}{pgvector.NewVector(embedding), threshold, limit}
+	paramIdx := 4
+
+	if since != nil {
+		timeFilter += fmt.Sprintf(" AND created_at >= $%d", paramIdx)
+		args = append(args, *since)
+		paramIdx++
+	}
+	if until != nil {
+		timeFilter += fmt.Sprintf(" AND created_at <= $%d", paramIdx)
+		args = append(args, *until)
+		paramIdx++
 	}
 
 	// Weighted similarity: raw cosine similarity multiplied by confidence.
 	// This ensures low-confidence (decayed) seeds rank lower even if semantically close.
 	// We also update last_accessed for returned seeds.
-	query := `
+	query := fmt.Sprintf(`
 		WITH matched AS (
 			SELECT id, content, title, type, confidence, last_accessed, created_at,
 			       (1 - (embedding <=> $1)) * confidence AS similarity
 			FROM seeds
-			WHERE (1 - (embedding <=> $1)) * confidence >= $2
+			WHERE (1 - (embedding <=> $1)) * confidence >= $2%s
 			ORDER BY embedding <-> $1
 			LIMIT $3
 		)
@@ -127,9 +143,9 @@ func (db *DB) SearchSeeds(ctx context.Context, embedding []float32, limit int, t
 		FROM matched m
 		WHERE s.id = m.id
 		RETURNING m.id, m.content, m.title, m.type, m.confidence, m.last_accessed, m.created_at, m.similarity
-	`
-	vec := pgvector.NewVector(embedding)
-	rows, err := db.QueryContext(ctx, query, vec, threshold, limit)
+	`, timeFilter)
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query seeds: %w", err)
 	}

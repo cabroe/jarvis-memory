@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v5"
 
@@ -82,6 +83,51 @@ type QuerySeedsRequest struct {
 	Query     string  `json:"query"`
 	Limit     int     `json:"limit"`
 	Threshold float32 `json:"threshold"`
+	Since     string  `json:"since"`
+	Until     string  `json:"until"`
+}
+
+func parseTimeKeyword(keyword string) *time.Time {
+	if keyword == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	var t time.Time
+
+	switch keyword {
+	case "today":
+		t = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	case "yesterday":
+		t = time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
+	case "this_week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		t = time.Date(now.Year(), now.Month(), now.Day()-(weekday-1), 0, 0, 0, 0, time.UTC)
+	case "last_week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		t = time.Date(now.Year(), now.Month(), now.Day()-(weekday-1)-7, 0, 0, 0, 0, time.UTC)
+	case "this_month":
+		t = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	case "last_month":
+		t = time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, time.UTC)
+	default:
+		// Try parsing as ISO 8601
+		parsed, err := time.Parse(time.RFC3339, keyword)
+		if err != nil {
+			// Try date-only format
+			parsed, err = time.Parse("2006-01-02", keyword)
+			if err != nil {
+				return nil
+			}
+		}
+		t = parsed
+	}
+	return &t
 }
 
 func (h *Handler) HandleQuerySeeds(c *echo.Context) error {
@@ -106,7 +152,10 @@ func (h *Handler) HandleQuerySeeds(c *echo.Context) error {
 		req.Threshold = 0.5
 	}
 
-	results, err := h.db.SearchSeeds(c.Request().Context(), emb, req.Limit, req.Threshold)
+	since := parseTimeKeyword(req.Since)
+	until := parseTimeKeyword(req.Until)
+
+	results, err := h.db.SearchSeeds(c.Request().Context(), emb, req.Limit, req.Threshold, since, until)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
