@@ -34,6 +34,8 @@ function show_help {
   echo -e "  stats                                 📊 Show database statistics"
   echo -e "  list [limit]                          📋 List latest seeds"
   echo -e "  reflect [day]                         🪞 Daily self-reflection (default: today)"
+  echo -e "  export [file]                         📦 Export all data as JSON"
+  echo -e "  import <file>                         📥 Import data from JSON backup"
   echo -e "  test                                  🧪 Test API connection"
 }
 
@@ -278,6 +280,114 @@ $(echo "$CONTENTS" | fold -s -w 120 | head -20)
       -d "{\"agentId\": \"${AGENT_ID}\", \"type\": \"episodic\", \"metadata\": {\"action\": \"reflection\", \"date\": \"${DATE_HUMAN}\", \"seed_count\": ${COUNT}}, \"summary\": $(echo "$SUMMARY" | jq -Rs .)}" > /dev/null 2>&1
 
     echo -e "${GREEN}✅ Reflexion gespeichert!${NC}"
+    ;;
+
+  export)
+    DATE_STAMP=$(date -u +"%Y%m%d_%H%M%S")
+    FILE="${2:-jarvis-memory-backup-${DATE_STAMP}.json}"
+
+    echo -e "📦 Exporting all data..."
+
+    SEEDS=$(curl -s "$API_URL/seeds?limit=10000")
+    CONTEXTS=$(curl -s "$API_URL/agent-contexts")
+
+    SEED_COUNT=$(echo "$SEEDS" | jq 'length')
+    CTX_COUNT=$(echo "$CONTEXTS" | jq 'length')
+
+    jq -n \
+      --argjson seeds "$SEEDS" \
+      --argjson contexts "$CONTEXTS" \
+      --arg exported_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+      --arg version "1.0" \
+      '{
+        version: $version,
+        exported_at: $exported_at,
+        seeds: $seeds,
+        agent_contexts: $contexts
+      }' > "$FILE"
+
+    SIZE=$(du -h "$FILE" | cut -f1)
+    echo -e "${GREEN}✅ Export complete!${NC}"
+    echo -e "  📄 File:     ${CYAN}$FILE${NC}"
+    echo -e "  🌱 Seeds:    $SEED_COUNT"
+    echo -e "  🤖 Contexts: $CTX_COUNT"
+    echo -e "  💾 Size:     $SIZE"
+    ;;
+
+  import)
+    FILE="$2"
+
+    if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+      echo -e "${RED}Error: backup file is required and must exist.${NC}"
+      echo "Usage: $0 import <backup.json>"
+      exit 1
+    fi
+
+    VERSION=$(jq -r '.version // "unknown"' "$FILE")
+    EXPORTED=$(jq -r '.exported_at // "unknown"' "$FILE")
+    SEED_COUNT=$(jq '.seeds | length' "$FILE")
+    CTX_COUNT=$(jq '.agent_contexts | length' "$FILE")
+
+    echo -e "${CYAN}📥 Importing from: ${YELLOW}$FILE${NC}"
+    echo -e "  Version:  $VERSION"
+    echo -e "  Exported: $EXPORTED"
+    echo -e "  🌱 Seeds: $SEED_COUNT"
+    echo -e "  🤖 Contexts: $CTX_COUNT"
+    echo ""
+
+    read -p "Proceed? (y/N) " CONFIRM
+    if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+      echo "Aborted."
+      exit 0
+    fi
+
+    # Import seeds
+    IMPORTED=0
+    FAILED=0
+    echo -e "🌱 Importing seeds..."
+    for i in $(seq 0 $(($SEED_COUNT - 1))); do
+      CONTENT=$(jq -r ".seeds[$i].content" "$FILE")
+      TITLE=$(jq -r ".seeds[$i].title" "$FILE")
+      TYPE=$(jq -r ".seeds[$i].type" "$FILE")
+
+      RESULT=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/seeds" \
+        -F "content=$CONTENT" \
+        -F "title=$TITLE" \
+        -F "type=$TYPE")
+
+      if [ "$RESULT" -eq 201 ]; then
+        IMPORTED=$((IMPORTED + 1))
+      else
+        FAILED=$((FAILED + 1))
+      fi
+      printf "\r  Progress: %d/%d (failed: %d)" $((IMPORTED + FAILED)) "$SEED_COUNT" "$FAILED"
+    done
+    echo ""
+
+    # Import contexts
+    CTX_IMPORTED=0
+    CTX_FAILED=0
+    echo -e "🤖 Importing contexts..."
+    for i in $(seq 0 $(($CTX_COUNT - 1))); do
+      BODY=$(jq ".agent_contexts[$i] | {agentId: .agentId, type: .type, metadata: .metadata, summary: .summary}" "$FILE")
+
+      RESULT=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/agent-contexts" \
+        -H "Content-Type: application/json" \
+        -d "$BODY")
+
+      if [ "$RESULT" -eq 201 ]; then
+        CTX_IMPORTED=$((CTX_IMPORTED + 1))
+      else
+        CTX_FAILED=$((CTX_FAILED + 1))
+      fi
+      printf "\r  Progress: %d/%d (failed: %d)" $((CTX_IMPORTED + CTX_FAILED)) "$CTX_COUNT" "$CTX_FAILED"
+    done
+    echo ""
+
+    echo -e ""
+    echo -e "${GREEN}✅ Import complete!${NC}"
+    echo -e "  🌱 Seeds:    ${IMPORTED} imported, ${FAILED} failed"
+    echo -e "  🤖 Contexts: ${CTX_IMPORTED} imported, ${CTX_FAILED} failed"
     ;;
     
   *)
