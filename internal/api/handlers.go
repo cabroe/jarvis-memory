@@ -22,6 +22,9 @@ func NewHandler(d *db.DB, e *embeddings.Service) *Handler {
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/seeds", h.HandleCreateSeed)
 	e.POST("/seeds/query", h.HandleQuerySeeds)
+	e.DELETE("/seeds/:id", h.HandleDeleteSeed)
+	e.PUT("/seeds/:id", h.HandleUpdateSeed)
+	e.POST("/seeds/:id/confidence", h.HandleSetConfidence)
 	e.POST("/agent-contexts", h.HandleCreateAgentContext)
 	e.GET("/agent-contexts", h.HandleGetAgentContexts)
 	e.GET("/agent-contexts/:id", h.HandleGetAgentContext)
@@ -78,7 +81,6 @@ func (h *Handler) HandleQuerySeeds(c *echo.Context) error {
 	if req.Limit <= 0 {
 		req.Limit = 10
 	}
-	// Allow 0.0 as a valid threshold
 	if req.Threshold < 0 {
 		req.Threshold = 0.5
 	}
@@ -93,6 +95,79 @@ func (h *Handler) HandleQuerySeeds(c *echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, results)
+}
+
+func (h *Handler) HandleDeleteSeed(c *echo.Context) error {
+	id := c.Param("id")
+
+	if err := h.db.DeleteSeed(c.Request().Context(), id); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]bool{"deleted": true})
+}
+
+type UpdateSeedRequest struct {
+	Content string `json:"content"`
+	Title   string `json:"title"`
+	Type    string `json:"type"`
+}
+
+func (h *Handler) HandleUpdateSeed(c *echo.Context) error {
+	id := c.Param("id")
+
+	var req UpdateSeedRequest
+	if err := c.Bind(&req); err != nil {
+		// Fallback to form values for multipart
+		req.Content = c.FormValue("content")
+		req.Title = c.FormValue("title")
+		req.Type = c.FormValue("type")
+	}
+
+	if req.Content == "" || req.Title == "" || req.Type == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "content, title, and type are required"})
+	}
+
+	emb, err := h.emb.Embed(req.Content)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to embed content"})
+	}
+
+	seed := &db.Seed{
+		ID:      id,
+		Content: req.Content,
+		Title:   req.Title,
+		Type:    req.Type,
+	}
+
+	if err := h.db.UpdateSeed(c.Request().Context(), seed, emb); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, seed)
+}
+
+type SetConfidenceRequest struct {
+	Confidence float32 `json:"confidence"`
+}
+
+func (h *Handler) HandleSetConfidence(c *echo.Context) error {
+	id := c.Param("id")
+
+	var req SetConfidenceRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	}
+
+	if req.Confidence < 0 || req.Confidence > 1 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "confidence must be between 0.0 and 1.0"})
+	}
+
+	if err := h.db.SetSeedConfidence(c.Request().Context(), id, req.Confidence); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "confidence": req.Confidence})
 }
 
 type CreateAgentContextRequest struct {
@@ -112,15 +187,12 @@ func (h *Handler) HandleCreateAgentContext(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "agentId and type are required"})
 	}
 
-	// For agent context, we typically embed the summary or stringified metadata
-	// The prompt implies the agent-context might just embed a combination.
-	// Let's combine summary and type to create an embedding, or just stringify the JSON.
 	textToEmbed := req.Summary
 	if textToEmbed == "" {
 		if len(req.Metadata) > 0 {
 			textToEmbed = string(req.Metadata)
 		} else {
-			textToEmbed = req.Type // fallback
+			textToEmbed = req.Type
 		}
 	}
 
@@ -145,7 +217,7 @@ func (h *Handler) HandleCreateAgentContext(c *echo.Context) error {
 
 func (h *Handler) HandleGetAgentContexts(c *echo.Context) error {
 	agentID := c.QueryParam("agentId")
-	
+
 	results, err := h.db.GetAgentContexts(c.Request().Context(), agentID)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -160,7 +232,7 @@ func (h *Handler) HandleGetAgentContexts(c *echo.Context) error {
 
 func (h *Handler) HandleGetAgentContext(c *echo.Context) error {
 	id := c.Param("id")
-	
+
 	ac, err := h.db.GetAgentContextByID(c.Request().Context(), id)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

@@ -27,7 +27,7 @@ test:
 	@echo "Testing connection..."
 	./scripts/jarvis-memory.sh test
 
- clean:
+clean:
 	@echo "Cleaning up..."
 	rm -rf .venv convert_model.py
 	# Optional: remove models if you want a complete clean

@@ -11,24 +11,72 @@ import (
 )
 
 type Seed struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	Title     string    `json:"title"`
-	Type      string    `json:"type"`
-	CreatedAt time.Time `json:"created_at"`
-	// embedding not exported fully in JSON
+	ID           string    `json:"id"`
+	Content      string    `json:"content"`
+	Title        string    `json:"title"`
+	Type         string    `json:"type"`
+	Confidence   float32   `json:"confidence"`
+	LastAccessed time.Time `json:"last_accessed"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (db *DB) InsertSeed(ctx context.Context, s *Seed, embedding []float32) error {
 	query := `
-		INSERT INTO seeds (content, title, type, embedding)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, created_at
+		INSERT INTO seeds (content, title, type, embedding, confidence)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, last_accessed
 	`
 	vec := pgvector.NewVector(embedding)
-	err := db.QueryRowContext(ctx, query, s.Content, s.Title, s.Type, vec).Scan(&s.ID, &s.CreatedAt)
+	if s.Confidence <= 0 {
+		s.Confidence = 1.0
+	}
+	err := db.QueryRowContext(ctx, query, s.Content, s.Title, s.Type, vec, s.Confidence).Scan(&s.ID, &s.CreatedAt, &s.LastAccessed)
 	if err != nil {
 		return fmt.Errorf("failed to insert seed: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) DeleteSeed(ctx context.Context, id string) error {
+	query := `DELETE FROM seeds WHERE id = $1`
+	result, err := db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete seed: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("seed not found")
+	}
+	return nil
+}
+
+func (db *DB) UpdateSeed(ctx context.Context, s *Seed, embedding []float32) error {
+	query := `
+		UPDATE seeds
+		SET content = $1, title = $2, type = $3, embedding = $4
+		WHERE id = $5
+		RETURNING created_at, confidence, last_accessed
+	`
+	vec := pgvector.NewVector(embedding)
+	err := db.QueryRowContext(ctx, query, s.Content, s.Title, s.Type, vec, s.ID).Scan(&s.CreatedAt, &s.Confidence, &s.LastAccessed)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("seed not found")
+		}
+		return fmt.Errorf("failed to update seed: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) SetSeedConfidence(ctx context.Context, id string, confidence float32) error {
+	query := `UPDATE seeds SET confidence = $1 WHERE id = $2`
+	result, err := db.ExecContext(ctx, query, confidence, id)
+	if err != nil {
+		return fmt.Errorf("failed to set confidence: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("seed not found")
 	}
 	return nil
 }
@@ -42,22 +90,24 @@ func (db *DB) SearchSeeds(ctx context.Context, embedding []float32, limit int, t
 	if limit <= 0 {
 		limit = 10
 	}
-	// Cosine distance is used implicitly with HNSW vector_l2_ops for L2 distance.
-	// Wait, the index is vector_l2_ops. L2 distance works as well for normalized HNSW.
-	// If L2 distance is D, similarity is 1 - (D^2)/2. 
-	// Or we can just use `<=>` for cosine distance if HNSW also supports it, but we built HNSW with vector_l2_ops.
-	// Let's use L2 distance `<->` and filter by threshold.
-	// Wait, pgvector HNSW index with vector_l2_ops requires `<->`. 
-	// similarity = 1 - (distance^2 / 2) for normalized vectors, or we can just return distance. The prompt expects maybe cosine similarity?
-	// The prompt didn't specify similarity return value explicitly, but we can compute something or just return L2 distance. I will use 1 - `<=>` for cosine similarity and just order by `<->`.
 
-	// Using L2 distance <-> to match the hnsw index with vector_l2_ops for performance.
+	// Weighted similarity: raw cosine similarity multiplied by confidence.
+	// This ensures low-confidence (decayed) seeds rank lower even if semantically close.
+	// We also update last_accessed for returned seeds.
 	query := `
-		SELECT id, content, title, type, created_at, 1 - (embedding <=> $1) AS similarity
-		FROM seeds
-		WHERE 1 - (embedding <=> $1) >= $2
-		ORDER BY embedding <-> $1
-		LIMIT $3
+		WITH matched AS (
+			SELECT id, content, title, type, confidence, last_accessed, created_at,
+			       (1 - (embedding <=> $1)) * confidence AS similarity
+			FROM seeds
+			WHERE (1 - (embedding <=> $1)) * confidence >= $2
+			ORDER BY embedding <-> $1
+			LIMIT $3
+		)
+		UPDATE seeds s
+		SET last_accessed = NOW()
+		FROM matched m
+		WHERE s.id = m.id
+		RETURNING m.id, m.content, m.title, m.type, m.confidence, m.last_accessed, m.created_at, m.similarity
 	`
 	vec := pgvector.NewVector(embedding)
 	rows, err := db.QueryContext(ctx, query, vec, threshold, limit)
@@ -69,7 +119,7 @@ func (db *DB) SearchSeeds(ctx context.Context, embedding []float32, limit int, t
 	var results []SeedSearchResult
 	for rows.Next() {
 		var res SeedSearchResult
-		if err := rows.Scan(&res.ID, &res.Content, &res.Title, &res.Type, &res.CreatedAt, &res.Similarity); err != nil {
+		if err := rows.Scan(&res.ID, &res.Content, &res.Title, &res.Type, &res.Confidence, &res.LastAccessed, &res.CreatedAt, &res.Similarity); err != nil {
 			return nil, err
 		}
 		results = append(results, res)
@@ -93,8 +143,7 @@ func (db *DB) InsertAgentContext(ctx context.Context, ac *AgentContext, embeddin
 		RETURNING id, created_at
 	`
 	vec := pgvector.NewVector(embedding)
-	
-	// if metadata is null, we can pass null
+
 	var meta interface{} = ac.Metadata
 	if len(ac.Metadata) == 0 {
 		meta = nil
@@ -115,7 +164,7 @@ func (db *DB) GetAgentContexts(ctx context.Context, agentID string) ([]AgentCont
 		query += ` WHERE agent_id = $1`
 		args = append(args, agentID)
 	}
-	
+
 	query += ` ORDER BY created_at DESC`
 
 	rows, err := db.QueryContext(ctx, query, args...)
@@ -151,7 +200,7 @@ func (db *DB) GetAgentContextByID(ctx context.Context, id string) (*AgentContext
 	err := db.QueryRowContext(ctx, query, id).Scan(&ac.ID, &ac.AgentID, &ac.Type, &meta, &sum, &ac.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // not found
+			return nil, nil
 		}
 		return nil, err
 	}

@@ -33,6 +33,11 @@ func main() {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
+	// 1b. Apply memory decay on startup
+	if err := dbConn.ApplyDecay(context.Background()); err != nil {
+		log.Printf("Warning: failed to apply decay: %v", err)
+	}
+
 	// 2. Initialize Embeddings
 	modelPath := os.Getenv("GTE_MODEL_PATH")
 	if modelPath == "" {
@@ -47,10 +52,10 @@ func main() {
 
 	// 3. Setup Echo
 	e := echo.New()
-	
+
 	// Middleware
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS("*")) // Allowed everywhere
+	e.Use(middleware.CORS("*"))
 
 	// 4. Register API Routes
 	apiHandler := api.NewHandler(dbConn, embService)
