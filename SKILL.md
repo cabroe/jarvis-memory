@@ -85,6 +85,17 @@ export JARVIS_AUTO_CAPTURE=false
 
 # 📊 Show statistics
 ./scripts/jarvis-memory.sh stats
+
+# 🪞 Daily self-reflection (saves summary as episodic seed)
+./scripts/jarvis-memory.sh reflect              # today
+./scripts/jarvis-memory.sh reflect yesterday
+
+# 📦 Export all data as JSON backup
+./scripts/jarvis-memory.sh export                 # auto-named with timestamp
+./scripts/jarvis-memory.sh export backup.json     # custom filename
+
+# 📥 Import data from JSON backup
+./scripts/jarvis-memory.sh import backup.json
 ```
 
 ### 🤖 Agent Contexts
