@@ -65,7 +65,13 @@ export JARVIS_AUTO_CAPTURE=false
 # 🔍 Semantic search
 ./scripts/jarvis-memory.sh search "query text" [limit] [threshold]
 
-# 📋 List latest seeds
+# � Time-based search
+./scripts/jarvis-memory.sh search "Was ist passiert?" --since today
+./scripts/jarvis-memory.sh search "Was war letzte Woche?" --since last_week --until this_week
+./scripts/jarvis-memory.sh search "JARVIS" --since 2026-02-20
+# Keywords: today, yesterday, this_week, last_week, this_month, last_month, YYYY-MM-DD
+
+# �📋 List latest seeds
 ./scripts/jarvis-memory.sh list [limit]
 
 # ✏️ Update a seed
