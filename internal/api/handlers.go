@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v5"
 
@@ -20,6 +21,7 @@ func NewHandler(d *db.DB, e *embeddings.Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	e.GET("/seeds", h.HandleListSeeds)
 	e.POST("/seeds", h.HandleCreateSeed)
 	e.POST("/seeds/query", h.HandleQuerySeeds)
 	e.DELETE("/seeds/:id", h.HandleDeleteSeed)
@@ -28,6 +30,25 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/agent-contexts", h.HandleCreateAgentContext)
 	e.GET("/agent-contexts", h.HandleGetAgentContexts)
 	e.GET("/agent-contexts/:id", h.HandleGetAgentContext)
+}
+
+func (h *Handler) HandleListSeeds(c *echo.Context) error {
+	limitStr := c.QueryParam("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	seeds, err := h.db.ListSeeds(c.Request().Context(), limit)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if seeds == nil {
+		seeds = []db.Seed{}
+	}
+	return c.JSON(http.StatusOK, seeds)
 }
 
 func (h *Handler) HandleCreateSeed(c *echo.Context) error {

@@ -20,6 +20,25 @@ type Seed struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+func (db *DB) ListSeeds(ctx context.Context, limit int) ([]Seed, error) {
+	query := `SELECT id, content, title, type, confidence, last_accessed, created_at FROM seeds ORDER BY created_at DESC LIMIT $1`
+	rows, err := db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list seeds: %w", err)
+	}
+	defer rows.Close()
+
+	var seeds []Seed
+	for rows.Next() {
+		var s Seed
+		if err := rows.Scan(&s.ID, &s.Content, &s.Title, &s.Type, &s.Confidence, &s.LastAccessed, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		seeds = append(seeds, s)
+	}
+	return seeds, nil
+}
+
 func (db *DB) InsertSeed(ctx context.Context, s *Seed, embedding []float32) error {
 	query := `
 		INSERT INTO seeds (content, title, type, embedding, confidence)

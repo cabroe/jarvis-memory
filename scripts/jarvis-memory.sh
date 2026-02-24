@@ -131,22 +131,23 @@ case "$1" in
   list)
     LIMIT="${2:-20}"
     echo -e "📋 Latest $LIMIT seeds..."
-    curl -s "$API_URL/admin/api/data" | jq ".seeds[:$LIMIT] | .[] | {id, title, type, confidence, created_at}"
+    curl -s "$API_URL/seeds?limit=$LIMIT" | jq '.[] | {id, title, type, confidence, created_at}'
     ;;
 
   stats)
     echo -e "${CYAN}📊 Jarvis Memory Statistics${NC}"
-    DATA=$(curl -s "$API_URL/admin/api/data")
-    SEED_COUNT=$(echo "$DATA" | jq '.seeds | length')
-    CTX_COUNT=$(echo "$DATA" | jq '.agentContexts | length')
+    SEEDS=$(curl -s "$API_URL/seeds?limit=1000")
+    CTXS=$(curl -s "$API_URL/agent-contexts")
+    SEED_COUNT=$(echo "$SEEDS" | jq 'length')
+    CTX_COUNT=$(echo "$CTXS" | jq 'length')
     echo -e "  🌱 Seeds:          ${GREEN}$SEED_COUNT${NC}"
     echo -e "  🤖 Agent Contexts: ${GREEN}$CTX_COUNT${NC}"
     echo -e ""
     echo -e "${CYAN}Seeds by Type:${NC}"
-    echo "$DATA" | jq -r '.seeds | group_by(.type) | .[] | "  \(.[0].type): \(length)"'
+    echo "$SEEDS" | jq -r 'group_by(.type) | .[] | "  \(.[0].type): \(length)"'
     echo -e ""
     echo -e "${CYAN}Avg Confidence:${NC}"
-    echo "$DATA" | jq -r '.seeds | (map(.confidence) | add / length) | "  \(. * 100 | round)%"'
+    echo "$SEEDS" | jq -r '(map(.confidence) | add / length) | "  \(. * 100 | round)%"'
     ;;
 
   context-create)
