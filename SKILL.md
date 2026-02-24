@@ -77,13 +77,20 @@ export JARVIS_AUTO_CAPTURE=false
 # ✏️ Update a seed
 ./scripts/jarvis-memory.sh update <UUID> "New content" "New title" [type]
 
-# 🗑️ Delete a seed
+# 🗑️ Delete a seed (protected seeds blocked)
 ./scripts/jarvis-memory.sh delete <UUID>
 
 # ⚖️ Set confidence (0.0-1.0)
 ./scripts/jarvis-memory.sh confidence <UUID> 0.5
 
-# 📊 Show statistics
+# �️ Protect/unprotect seeds
+./scripts/jarvis-memory.sh protect <UUID>       # prevent delete + decay
+./scripts/jarvis-memory.sh unprotect <UUID>     # remove protection
+
+# 🏷️ Auto-classify all seeds (WICHTIG/MITTEL/UNWICHTIG)
+./scripts/jarvis-memory.sh classify
+
+# �📊 Show statistics
 ./scripts/jarvis-memory.sh stats
 
 # 🪞 Daily self-reflection (saves summary as episodic seed)
@@ -129,13 +136,14 @@ weighted_similarity = cosine_similarity × confidence
 
 **Automatic Decay (Startup):**
 - Beim Server-Start werden alle Seeds geprüft
-- **Bedingung:** >90 Tage alt UND Confidence < 0.3
+- **Bedingung:** >90 Tage alt UND Confidence < 0.3 UND **nicht geschützt**
 - **Aktion:** Confidence wird um 10% reduziert
 - **Floor:** Confidence geht nie unter 0.01
 
-**Last Accessed:**
-- Jede Suche aktualisiert `last_accessed`
-- Ermöglicht nutzungsbasiertes Vergessen
+**🛡️ Seed Protection:**
+- Geschützte Seeds können nicht gelöscht werden
+- Decay greift nicht auf geschützte Seeds
+- `classify` setzt automatisch: WICHTIG (1.0 + geschützt), MITTEL (0.7), UNWICHTIG (0.3)
 
 ## API Endpoints
 
@@ -145,8 +153,9 @@ weighted_similarity = cosine_similarity × confidence
 | `POST` | `/seeds` | 💾 Save text (multipart: `content`, `title`, `type`) |
 | `POST` | `/seeds/query` | 🔍 Semantic search (JSON: `query`, `limit`, `threshold`) |
 | `PUT` | `/seeds/:id` | ✏️ Update seed (JSON: `content`, `title`, `type`) |
-| `DELETE` | `/seeds/:id` | 🗑️ Delete a seed |
+| `DELETE` | `/seeds/:id` | 🗑️ Delete a seed (blocked if protected) |
 | `POST` | `/seeds/:id/confidence` | ⚖️ Set confidence (JSON: `confidence`) |
+| `POST` | `/seeds/:id/protect` | 🛡️ Set protection (JSON: `protected`) |
 | `POST` | `/agent-contexts` | 📝 Create agent context |
 | `GET` | `/agent-contexts` | 📋 List contexts (`?agentId=` filter) |
 | `GET` | `/agent-contexts/:id` | 🔎 Get specific context |
