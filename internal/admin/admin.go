@@ -3,9 +3,8 @@ package admin
 import (
 	"context"
 	"database/sql"
-	_ "embed"
-	"html/template"
-	"io"
+	"embed"
+	"io/fs"
 	"net/http"
 	"time"
 
@@ -14,16 +13,8 @@ import (
 	"jarvis-memory/internal/db"
 )
 
-//go:embed templates/index.html
-var indexHTML string
-
-type Renderer struct {
-	templates *template.Template
-}
-
-func (r *Renderer) Render(c *echo.Context, w io.Writer, name string, data interface{}) error {
-	return r.templates.ExecuteTemplate(w, name, data)
-}
+//go:embed dist/*
+var distFS embed.FS
 
 type AdminHandler struct {
 	db *db.DB
@@ -34,52 +25,56 @@ func NewHandler(dbConn *db.DB) *AdminHandler {
 }
 
 func (h *AdminHandler) RegisterRoutes(e *echo.Echo) {
-	t := &Renderer{
-		templates: template.Must(template.New("index.html").Funcs(template.FuncMap{
-			"truncate": func(s string, l int) string {
-				if len(s) > l {
-					return s[:l] + "..."
-				}
-				return s
-			},
-			"mul": func(a float32, b float64) float64 {
-				return float64(a) * b
-			},
-			"ge": func(a float32, b float64) bool {
-				return float64(a) >= b
-			},
-		}).Parse(indexHTML)),
-	}
-	e.Renderer = t
+	// JSON API for the React frontend
+	e.GET("/admin/api/data", h.HandleAdminData)
 
-	e.GET("/admin", h.HandleAdmin)
+	// Serve the React SPA from embedded dist/
+	distContent, _ := fs.Sub(distFS, "dist")
+	fileServer := http.FileServer(http.FS(distContent))
+
+	// Serve static assets (JS, CSS, SVGs)
+	e.GET("/assets/*", echo.WrapHandler(fileServer))
+	e.GET("/vite.svg", echo.WrapHandler(fileServer))
+
+	// SPA fallback: serve index.html for /admin
+	e.GET("/admin", func(c *echo.Context) error {
+		indexBytes, err := distFS.ReadFile("dist/index.html")
+		if err != nil {
+			return c.String(http.StatusInternalServerError, "Admin panel not built")
+		}
+		return c.HTML(http.StatusOK, string(indexBytes))
+	})
 }
-
 
 type AdminData struct {
-	Seeds         []db.Seed
-	AgentContexts []db.AgentContext
+	Seeds         []db.Seed         `json:"seeds"`
+	AgentContexts []db.AgentContext `json:"agentContexts"`
 }
 
-func (h *AdminHandler) HandleAdmin(c *echo.Context) error {
+func (h *AdminHandler) HandleAdminData(c *echo.Context) error {
 	ctx := c.Request().Context()
 
 	seeds, err := h.getLatestSeeds(ctx)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Failed to load seeds: "+err.Error())
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load seeds: " + err.Error()})
 	}
 
 	contexts, err := h.getLatestAgentContexts(ctx)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "Failed to load agent contexts: "+err.Error())
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load agent contexts: " + err.Error()})
 	}
 
-	data := AdminData{
+	if seeds == nil {
+		seeds = []db.Seed{}
+	}
+	if contexts == nil {
+		contexts = []db.AgentContext{}
+	}
+
+	return c.JSON(http.StatusOK, AdminData{
 		Seeds:         seeds,
 		AgentContexts: contexts,
-	}
-
-	return c.Render(http.StatusOK, "index.html", data)
+	})
 }
 
 func (h *AdminHandler) getLatestSeeds(ctx context.Context) ([]db.Seed, error) {
